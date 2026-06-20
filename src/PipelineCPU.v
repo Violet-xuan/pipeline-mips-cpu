@@ -8,10 +8,10 @@ module PipelineCPU(
 	output [31:0] MemWriteData,
 	input  [31:0] MemReadData
 );
-	// ---------- hazard/forward control (Phase3/4 wire in; here: no stall/forward/flush) ----------
-	wire        stall      = 1'b0;
-	wire        flush_IFID = 1'b0;
-	wire        flush_IDEX = 1'b0;
+	// ---------- hazard/forward control ----------
+	wire        stall;
+	wire        flush_IFID;
+	wire        flush_IDEX;
 	wire [1:0]  ForwardA;
 	wire [1:0]  ForwardB;
 	wire        redirect_EX;     // from EX branch/jr
@@ -25,6 +25,13 @@ module PipelineCPU(
 		.MEMWB_RegWrite(w_RegWrite),.MEMWB_rd(w_waddr),
 		.IDEX_rs(x_rs),.IDEX_rt(x_rt),.ForwardA(ForwardA),.ForwardB(ForwardB));
 
+	// hazard unit: load-use stall + branch/jump flush
+	HazardUnit hz(
+		.IDEX_MemRead(x_MemRead),.IDEX_rt(x_rt),
+		.IFID_rs(ID_rs),.IFID_rt(ID_rt),
+		.redirect_EX(redirect_EX),.redirect_ID(redirect_ID),
+		.stall(stall),.flush_IFID(flush_IFID),.flush_IDEX(flush_IDEX));
+
 	// ================= IF =================
 	reg  [31:0] PC;
 	wire [31:0] PC_plus4 = PC + 32'd4;
@@ -32,7 +39,7 @@ module PipelineCPU(
 	                       redirect_ID ? target_ID : PC_plus4;
 	always @(posedge clk or posedge reset)
 		if (reset) PC <= 32'd0;
-		else if (!stall) PC <= PC_next;
+		else if (!stall || redirect_EX || redirect_ID) PC <= PC_next;
 
 	wire [31:0] IF_inst;
 	InstructionMemory imem(.Address(PC), .Instruction(IF_inst));
