@@ -11,9 +11,19 @@ module tb_cpu_chuanzhitiao;
 		.Address(MemAddr),.WriteData(MemWriteData),.ReadData(MemReadData),.digi(digi));
 	always #5 clk=~clk;
 	integer errors=0;
+
+	// cycle counter + completion detection (C for CPI = C/N)
+	integer cycles=0; integer done_cycle=-1;
+	always @(posedge clk) if(!reset) begin
+		cycles = cycles + 1;
+		// scratch write at 0x3FF8 marks algorithm completion
+		if (done_cycle<0 && MemWrite && MemAddr==32'h00003FF8) done_cycle = cycles;
+	end
+
 	initial begin
 		#12 reset=0;
 		#400000;  // run long enough for init + DFS to finish and store the result
+		$display("completion cycle C = %0d (algorithm done; excludes display loop)", done_cycle);
 		$display("scratch[0x3FF8] = %0d (0x%h)", bus.dmem.RAM[4094], bus.dmem.RAM[4094]);
 		$display("digi = 0x%h (display loop active)", digi);
 		if (bus.dmem.RAM[4094]!==32'd34) begin errors=errors+1;
