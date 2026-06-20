@@ -1021,8 +1021,8 @@ git commit -m "test: load-use stall+forward integration test passes"
 ```
 24010001
 24020002
-10220002
-2407270f
+10210002
+240703e7
 24070378
 2403006f
 0c000009
@@ -1030,7 +1030,7 @@ git commit -m "test: load-use stall+forward integration test passes"
 1000ffff
 03e00008
 ```
-> 校验：`10220002`=beq $1,$1,2；`0c000009`=jal 0x24(字地址9)；`2404...`：444=0x1bc → `2404 01bc`；`1000ffff`=beq $0,$0,-1(自旋)；`03e00008`=jr $31。
+> 校验：`10210002`=beq $1,$1,offset 2（rt 必须=$1 才相等取分支）；`0c000009`=jal 0x24(字地址9)；`240401bc`=addiu $4,$0,444；`1000ffff`=beq $0,$0,-1(自旋)；`03e00008`=jr $31。
 
 - [ ] **Step 2: testbench**
 
