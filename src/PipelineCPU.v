@@ -12,12 +12,18 @@ module PipelineCPU(
 	wire        stall      = 1'b0;
 	wire        flush_IFID = 1'b0;
 	wire        flush_IDEX = 1'b0;
-	wire [1:0]  ForwardA   = 2'b00;
-	wire [1:0]  ForwardB   = 2'b00;
+	wire [1:0]  ForwardA;
+	wire [1:0]  ForwardB;
 	wire        redirect_EX;     // from EX branch/jr
 	wire [31:0] target_EX;
 	wire        redirect_ID;     // from ID j/jal
 	wire [31:0] target_ID;
+
+	// forwarding unit (operates on ID/EX rs/rt vs EX/MEM & MEM/WB dests)
+	ForwardingUnit fwd(
+		.EXMEM_RegWrite(m_RegWrite),.EXMEM_rd(m_waddr),
+		.MEMWB_RegWrite(w_RegWrite),.MEMWB_rd(w_waddr),
+		.IDEX_rs(x_rs),.IDEX_rt(x_rt),.ForwardA(ForwardA),.ForwardB(ForwardB));
 
 	// ================= IF =================
 	reg  [31:0] PC;
