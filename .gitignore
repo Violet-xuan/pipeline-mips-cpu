@@ -1,0 +1,16 @@
+# Vivado / build artifacts
+*.jou
+*.log
+*.str
+.Xil/
+vivado*/
+*.cache/
+*.runs/
+*.hw/
+*.sim/
+*.ip_user_files/
+*.bit
+
+# OS junk
+.DS_Store
+__MACOSX/
