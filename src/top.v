@@ -17,12 +17,14 @@ module top(
 	wire [11:0] digi;
 	PipelineCPU cpu(.clk(cpu_clk),.reset(rst_btn),.MemRead(MemRead),.MemWrite(MemWrite),
 		.MemAddr(MemAddr),.MemWriteData(MemWriteData),.MemReadData(MemReadData));
-	MemBus bus(.clk(cpu_clk),.reset(rst_btn),.MemRead(MemRead),.MemWrite(MemWrite),
-		.Address(MemAddr),.WriteData(MemWriteData),.ReadData(MemReadData),.digi(digi));
+	// cpu_clk = 100MHz/4 = 25MHz drives the UART baud divider
+	MemBus #(.CLK_FREQ(25_000_000),.BAUD(9600)) bus(
+		.clk(cpu_clk),.reset(rst_btn),.MemRead(MemRead),.MemWrite(MemWrite),
+		.Address(MemAddr),.WriteData(MemWriteData),.ReadData(MemReadData),.digi(digi),
+		.uart_txd(uart_txd),.uart_rxd(uart_rxd));
 
 	// digi[6:0]=g..a (digi[0]=a), digi[7]=dp, digi[11:8]=AN3..AN0
 	assign {seg_g,seg_f,seg_e,seg_d,seg_c,seg_b,seg_a} = digi[6:0];
 	assign seg_dp = digi[7];
 	assign {sel4,sel3,sel2,sel1} = digi[11:8];
-	assign uart_txd = 1'b1;   // placeholder (replaced in Phase 8)
 endmodule
