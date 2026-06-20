@@ -42,7 +42,7 @@ def write_dmem(path, m, n, g):
                 fh.write("%08x\n" % (g[i][j] & 0xffffffff))
 
 SRCS = ["PipelineCPU.v","Control.v","ALU.v","ALUControl.v","RegisterFile.v",
-        "InstructionMemory.v","DataMemory.v","ForwardingUnit.v","HazardUnit.v","MemBus.v"]
+        "InstructionMemory.v","DataMemory.v","ForwardingUnit.v","HazardUnit.v","MemBus.v","UART.v"]
 
 def run_case(m, n, g, idx):
     dmem = os.path.join(SIM, "dmem_case.hex")
@@ -73,7 +73,8 @@ module tb_chuanzhitiao_auto;
     PipelineCPU cpu(.clk(clk),.reset(reset),.MemRead(MemRead),.MemWrite(MemWrite),
         .MemAddr(MemAddr),.MemWriteData(MemWriteData),.MemReadData(MemReadData));
     MemBus bus(.clk(clk),.reset(reset),.MemRead(MemRead),.MemWrite(MemWrite),
-        .Address(MemAddr),.WriteData(MemWriteData),.ReadData(MemReadData),.digi(digi));
+        .Address(MemAddr),.WriteData(MemWriteData),.ReadData(MemReadData),.digi(digi),
+        .uart_txd(),.uart_rxd(1'b1));
     always #5 clk=~clk;
     initial begin
         #12 reset=0;

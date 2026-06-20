@@ -8,7 +8,8 @@ module tb_cpu_chuanzhitiao;
 	PipelineCPU cpu(.clk(clk),.reset(reset),.MemRead(MemRead),.MemWrite(MemWrite),
 		.MemAddr(MemAddr),.MemWriteData(MemWriteData),.MemReadData(MemReadData));
 	MemBus bus(.clk(clk),.reset(reset),.MemRead(MemRead),.MemWrite(MemWrite),
-		.Address(MemAddr),.WriteData(MemWriteData),.ReadData(MemReadData),.digi(digi));
+		.Address(MemAddr),.WriteData(MemWriteData),.ReadData(MemReadData),.digi(digi),
+		.uart_txd(),.uart_rxd(1'b1));
 	always #5 clk=~clk;
 	integer errors=0;
 
