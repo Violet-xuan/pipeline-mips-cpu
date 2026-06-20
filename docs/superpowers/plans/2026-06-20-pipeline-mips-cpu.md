@@ -919,9 +919,10 @@ git commit -m "feat: wire HazardUnit into datapath"
 hex：
 ```
 8c010000
-00221020
+00211020
 ac020004
 ```
+> 校验：`00211020`=add $2,$1,$1（rt 字段须为 $1）。
 
 - [ ] **Step 2: testbench**
 
