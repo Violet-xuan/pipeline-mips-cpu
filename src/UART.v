@@ -71,7 +71,10 @@ module UART #(
 	always @(posedge clk or posedge reset) begin
 		if (reset) begin
 			rx_active <= 1'b0; rx_div <= 0; rx_bitcnt <= 0; rx_shift <= 0;
-			rx_data_r <= 0; rx_done_r <= 1'b0; rxd_s1 <= 1'b1; rxd_s2 <= 1'b1;
+			rx_data_r <= 0; rx_done_r <= 1'b0;
+			// NOTE: rxd_s1/rxd_s2 are driven ONLY by the synchronizer block above.
+			// Resetting them here too makes the net multi-driven; Vivado then ties it
+			// to a constant (VCC) and drops the synchronizer -> rxd stuck high -> RX dead.
 		end else begin
 			if (rxd_read) rx_done_r <= 1'b0;        // consumed by CPU
 			if (!rx_active) begin
