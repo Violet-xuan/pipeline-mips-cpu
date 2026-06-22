@@ -36,7 +36,11 @@ foreach a $argv {
     if {$a eq "no_flow"} { set run_flow 0 }
     if {$a eq "gui"}     { set keep_gui 1; set run_flow 0 }
     if {$a eq "perf"}    { set perf 1 }
+    if {[string match "imem=*" $a]} { set imem_hex_rel [string range $a 5 end] }
 }
+# env-var override (robust against shell arg-quoting): set IMEM_HEX before launch
+if {[info exists ::env(IMEM_HEX)] && $::env(IMEM_HEX) ne ""} { set imem_hex_rel $::env(IMEM_HEX) }
+puts "INFO: using IMEM = $imem_hex_rel"
 
 # ---- (re)create project ----
 file mkdir $build_dir
