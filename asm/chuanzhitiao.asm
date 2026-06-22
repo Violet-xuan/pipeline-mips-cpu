@@ -252,11 +252,19 @@ seg7_F:
     jr    $ra
 
 # ---- delay: software delay for display multiplexing ----
-# 30000 iterations keeps the 4-digit refresh well above ~100 Hz at 25-100 MHz
-# (the old 0x20000 gave ~12 Hz at 25 MHz -> visible flicker).
+# Polls UART rx_done EVERY iteration (sub-us latency): the FIFO-less receiver
+# holds only one byte, so when a new dataset's first byte arrives we must jump
+# to the receiver before the second byte overwrites it. Without this, a second
+# dataset sent while the board is in the display loop desyncs (needs a reset).
+# 5000 iters (~2 ms/digit at 25 MHz with the poll body) keeps refresh >100 Hz.
 delay:
-    addiu $t1, $zero, 30000
+    addiu $t1, $zero, 5000
 delay_l:
+    lui   $t2, 0x4000
+    ori   $t2, $t2, 0x0020         # CON
+    lw    $t2, 0($t2)
+    andi  $t2, $t2, 0x8            # rx_done (bit3)
+    bne   $t2, $zero, main         # new dataset arriving -> receive it now
     addiu $t1, $t1, -1
     bne   $t1, $zero, delay_l
     jr    $ra
