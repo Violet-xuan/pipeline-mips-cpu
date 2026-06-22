@@ -1,21 +1,34 @@
 # 传纸条 (passing notes) — hardware version for the 5-stage pipeline MIPS CPU.
 # DFS + memoization, faithfully transcribed from the theory-course recursion.asm,
-# but with NO syscalls: input is preset in data RAM, result is shown on the
-# 7-seg display via software decoding (and also stored to a scratch word for sim check).
+# but with NO syscalls. Bidirectional UART I/O: the PC sends a dataset over the
+# serial port, the CPU computes, and sends the answer back. The result is ALSO
+# shown on the 7-seg display (refreshed between datasets) and stored to a scratch
+# word for simulation self-check.
 #
-# Data RAM layout (byte addresses; preset via dmem hex):
-#   0x0000 : m (rows)
-#   0x0004 : n (cols)
+# ---- Binary UART protocol (8N1) ----
+#   host -> board:  byte m, byte n, then m*n grid bytes (row-major), each 0..255
+#   board -> host:  4 bytes of the 32-bit result, MSB first (big-endian)
+# After sending the answer the board keeps the 7-seg refreshed; the moment a new
+# byte arrives (start of the next dataset) it loops back to receive again.
+#
+# Data RAM layout (byte addresses):
+#   0x0000 : m (rows)            <- written by recv_dataset
+#   0x0004 : n (cols)            <- written by recv_dataset
 #   0x0008 : grid[m*n], row-major, grid[i][j] at 0x0008+(i*n+j)*4
-#   then  : memo table (bump-allocated right after the grid)
+#   then   : memo table (bump-allocated right after the grid)
 #   0x3FF8 : result scratch (for simulation self-check)
 #   0x3FF4 : initial $sp (stack grows down)
+#
+# MMIO: 0x40000010 7-seg digi | 0x40000018 UART TXD | 0x4000001C UART RXD | 0x40000020 UART CON
+#   CON bits: bit2 tx_done(=idle) | bit3 rx_done | bit4 tx_busy
 #
 # Global registers (kept live across DFS): $s0=m $s1=n $s2=grid_base $s3=memo_base $s7=m+n-1
 # DFS args: $a0=x1 $a1=y1 $a2=x2 ; returns best additional sum in $v0 (-1 if infeasible)
 
 main:
-    addiu $sp, $zero, 16372        # $sp = 0x3FF4
+    addiu $sp, $zero, 16372        # $sp = 0x3FF4 (reset every round)
+    jal   recv_dataset             # read m, n, grid from UART into DMEM
+
     lw    $s0, 0($zero)            # m
     lw    $s1, 4($zero)            # n
     addiu $s2, $zero, 8            # grid base = 0x0008
@@ -46,11 +59,12 @@ init_loop:
 
     move  $s5, $v0                 # result
     sw    $s5, 16376($zero)        # scratch 0x3FF8 (sim check)
+    jal   send_result              # send result (4 bytes, MSB first) over UART
 
     lui   $s4, 0x4000
     ori   $s4, $s4, 0x0010         # $s4 = 0x40000010 (7-seg register)
 
-# ---- multiplexed 4-digit hex display (low 16 bits of result) ----
+# ---- multiplexed 4-digit hex display; poll UART for the next dataset ----
 display_loop:
     andi  $t0, $s5, 0xF            # digit 0 -> AN0 (bit8)
     jal   seg7
@@ -79,7 +93,83 @@ display_loop:
     sw    $v0, 0($s4)
     jal   delay
 
+    # a byte waiting on UART RX means a new dataset is coming -> receive it
+    lui   $t9, 0x4000
+    ori   $t8, $t9, 0x0020         # CON
+    lw    $t9, 0($t8)
+    andi  $t9, $t9, 0x8            # rx_done (bit3)
+    bne   $t9, $zero, main         # restart the round (re-inits $sp, reads dataset)
     j     display_loop
+
+# ============================ UART I/O ============================
+# recv_dataset: read m, n, then m*n grid bytes from UART into DMEM.
+recv_dataset:
+    addi  $sp, $sp, -4
+    sw    $ra, 0($sp)
+    jal   uart_getc
+    sw    $v0, 0($zero)            # m -> 0x0
+    move  $t3, $v0
+    jal   uart_getc
+    sw    $v0, 4($zero)            # n -> 0x4
+    move  $t4, $v0
+    mul   $t0, $t3, $t4            # count = m*n
+    addiu $t1, $zero, 8            # dst byte addr (grid base)
+    addiu $t2, $zero, 0            # i = 0
+recv_grid_loop:
+    bge   $t2, $t0, recv_done
+    jal   uart_getc
+    sw    $v0, 0($t1)              # grid[i] (zero-extended byte)
+    addiu $t1, $t1, 4
+    addiu $t2, $t2, 1
+    j     recv_grid_loop
+recv_done:
+    lw    $ra, 0($sp)
+    addi  $sp, $sp, 4
+    jr    $ra
+
+# send_result: transmit $s5 as 4 bytes over UART, MSB first.
+send_result:
+    addi  $sp, $sp, -4
+    sw    $ra, 0($sp)
+    srl   $a0, $s5, 24
+    andi  $a0, $a0, 0xFF
+    jal   uart_putc
+    srl   $a0, $s5, 16
+    andi  $a0, $a0, 0xFF
+    jal   uart_putc
+    srl   $a0, $s5, 8
+    andi  $a0, $a0, 0xFF
+    jal   uart_putc
+    andi  $a0, $s5, 0xFF
+    jal   uart_putc
+    lw    $ra, 0($sp)
+    addi  $sp, $sp, 4
+    jr    $ra
+
+# uart_getc: block until a byte arrives, return it in $v0. Uses $t7,$t8,$t9 only.
+uart_getc:
+    lui   $t9, 0x4000
+    ori   $t8, $t9, 0x0020         # CON
+    ori   $t7, $t9, 0x001C         # RXD
+uart_getc_wait:
+    lw    $t9, 0($t8)
+    andi  $t9, $t9, 0x8            # rx_done (bit3)
+    beq   $t9, $zero, uart_getc_wait
+    lw    $v0, 0($t7)              # read RXD (clears rx_done)
+    andi  $v0, $v0, 0xFF
+    jr    $ra
+
+# uart_putc: block until TX idle, then send the byte in $a0. Uses $t7,$t8,$t9.
+uart_putc:
+    lui   $t9, 0x4000
+    ori   $t8, $t9, 0x0020         # CON
+    ori   $t7, $t9, 0x0018         # TXD
+uart_putc_wait:
+    lw    $t9, 0($t8)
+    andi  $t9, $t9, 0x4            # tx_done (bit2, 1 = idle)
+    beq   $t9, $zero, uart_putc_wait
+    sw    $a0, 0($t7)              # write TXD -> start transmit
+    jr    $ra
 
 # ---- seg7: nibble in $t0 -> 7-seg pattern (g..a, bit6..bit0) in $v0 ----
 seg7:
@@ -161,9 +251,11 @@ seg7_F:
     addiu $v0, $zero, 0x71
     jr    $ra
 
-# ---- delay: software delay for display multiplexing (~tune for board) ----
+# ---- delay: software delay for display multiplexing ----
+# 30000 iterations keeps the 4-digit refresh well above ~100 Hz at 25-100 MHz
+# (the old 0x20000 gave ~12 Hz at 25 MHz -> visible flicker).
 delay:
-    lui   $t1, 0x0002
+    addiu $t1, $zero, 30000
 delay_l:
     addiu $t1, $t1, -1
     bne   $t1, $zero, delay_l
