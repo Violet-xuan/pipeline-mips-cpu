@@ -1,9 +1,8 @@
 ## 时钟 100MHz
 set_property -dict {PACKAGE_PIN R4 IOSTANDARD LVCMOS33} [get_ports clk100]
 create_clock -name sys_clk -period 10.000 [get_ports clk100]
-## (cpu_clk generated-clock constraint is applied post-implementation in
-##  scripts/report_fmax.tcl, not here — keeping it in the build XDC wedges
-##  Vivado 2017.3 synthesis on the divider pin reference.)
+## sys_clk (100 MHz) now clocks the CPU directly (no fabric divider), so this
+## constraint is the CPU timing budget; check WNS via scripts/report_fmax.tcl.
 
 ## 复位 KEY1（按下高电平）
 set_property -dict {PACKAGE_PIN B22 IOSTANDARD LVCMOS33} [get_ports rst_btn]
