@@ -31,9 +31,11 @@ set build_dir  [file join $root_dir build vivado]
 # ---- parse args ----
 set run_flow 1
 set keep_gui 0
+set perf     0
 foreach a $argv {
     if {$a eq "no_flow"} { set run_flow 0 }
     if {$a eq "gui"}     { set keep_gui 1; set run_flow 0 }
+    if {$a eq "perf"}    { set perf 1 }
 }
 
 # ---- (re)create project ----
@@ -82,6 +84,13 @@ puts "INFO: project created at [file join $build_dir $proj_name.xpr]"
 puts "INFO: top=$top_module part=$part"
 puts "INFO: IMEM=$imem_hex"
 puts "INFO: DMEM=$dmem_hex"
+
+# ---- optional timing-focused strategies (pass 'perf') ----
+if {$perf} {
+    puts "INFO: perf mode — retiming synth + post-route phys_opt impl"
+    set_property strategy Flow_PerfOptimized_high            [get_runs synth_1]
+    set_property strategy Performance_ExplorePostRoutePhysOpt [get_runs impl_1]
+}
 
 # ---- optional: run synth -> impl -> bitstream ----
 if {$run_flow} {
