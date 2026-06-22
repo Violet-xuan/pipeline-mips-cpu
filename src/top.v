@@ -24,7 +24,9 @@ module top(
 		.uart_txd(uart_txd),.uart_rxd(uart_rxd));
 
 	// digi[6:0]=g..a (digi[0]=a), digi[7]=dp, digi[11:8]=AN3..AN0
+	// Board's leftmost physical digit is sel1, so MSB nibble (AN3=digi[11])
+	// must drive sel1 to read MSB..LSB left-to-right (e.g. 0x0022 -> "0022").
 	assign {seg_g,seg_f,seg_e,seg_d,seg_c,seg_b,seg_a} = digi[6:0];
 	assign seg_dp = digi[7];
-	assign {sel4,sel3,sel2,sel1} = digi[11:8];
+	assign {sel1,sel2,sel3,sel4} = digi[11:8];
 endmodule
