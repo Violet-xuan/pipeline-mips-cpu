@@ -8,20 +8,21 @@ module top(
 	output        uart_txd,
 	input         uart_rxd
 );
-	// ---- clock divider: cpu_clk = clk100 / 4 = 25 MHz ----
-	// The async distributed-RAM IMEM/DMEM read paths don't close at 100 MHz, so
-	// the CPU only runs reliably at the divided clock. Keep 25 MHz (proven on
-	// board); raising Fmax cleanly would need registered/BRAM memories.
-	reg [1:0] divcnt = 2'd0;
-	always @(posedge clk100) divcnt <= divcnt + 2'd1;
-	wire cpu_clk = divcnt[1];
+	// ---- clock divider: cpu_clk = clk100 / 2 = 50 MHz ----
+	// The async distributed-RAM IMEM/DMEM read paths + single-cycle DSP multiply
+	// give a ~11.3 ns critical path (~88 MHz true Fmax), so 100 MHz can't close,
+	// but a clean /2 (20 ns budget) leaves ~8 ns slack. cpu_clk is a named toggle
+	// FF so the create_generated_clock in welog1.xdc can pin its Q for STA.
+	reg cpu_clk_r = 1'b0;
+	always @(posedge clk100) cpu_clk_r <= ~cpu_clk_r;
+	wire cpu_clk = cpu_clk_r;
 
 	wire        MemRead,MemWrite; wire [31:0] MemAddr,MemWriteData,MemReadData;
 	wire [11:0] digi;
 	PipelineCPU cpu(.clk(cpu_clk),.reset(rst_btn),.MemRead(MemRead),.MemWrite(MemWrite),
 		.MemAddr(MemAddr),.MemWriteData(MemWriteData),.MemReadData(MemReadData));
-	// cpu_clk = 25 MHz drives the UART baud divider (DIV = 25e6/9600 = 2604)
-	MemBus #(.CLK_FREQ(25_000_000),.BAUD(9600)) bus(
+	// cpu_clk = 50 MHz drives the UART baud divider (DIV = 50e6/9600 = 5208)
+	MemBus #(.CLK_FREQ(50_000_000),.BAUD(9600)) bus(
 		.clk(cpu_clk),.reset(rst_btn),.MemRead(MemRead),.MemWrite(MemWrite),
 		.Address(MemAddr),.WriteData(MemWriteData),.ReadData(MemReadData),.digi(digi),
 		.uart_txd(uart_txd),.uart_rxd(uart_rxd));

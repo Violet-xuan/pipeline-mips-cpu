@@ -1,8 +1,11 @@
 ## 时钟 100MHz
 set_property -dict {PACKAGE_PIN R4 IOSTANDARD LVCMOS33} [get_ports clk100]
 create_clock -name sys_clk -period 10.000 [get_ports clk100]
-## sys_clk (100 MHz) now clocks the CPU directly (no fabric divider), so this
-## constraint is the CPU timing budget; check WNS via scripts/report_fmax.tcl.
+## CPU runs on cpu_clk = clk100/2 = 50 MHz (toggle FF cpu_clk_r in top.v).
+## Define it as a generated clock so STA budgets the CPU at its real 20 ns
+## period (not the pessimistic 10 ns of sys_clk). Check WNS via report_fmax.tcl.
+create_generated_clock -name cpu_clk -source [get_ports clk100] -divide_by 2 \
+    [get_pins cpu_clk_r_reg/Q]
 
 ## 复位 KEY1（按下高电平）
 set_property -dict {PACKAGE_PIN B22 IOSTANDARD LVCMOS33} [get_ports rst_btn]
