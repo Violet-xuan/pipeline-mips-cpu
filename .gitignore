@@ -24,10 +24,12 @@ sim/dmem_case.hex
 sim/tb_chuanzhitiao_auto.v
 sim/uart_in.hex
 sim/_uart_tb.out
+sim/*.out
 
 # Vivado generated project/runs (regenerable via scripts/build_vivado.tcl)
 build/
 2026夏流水线CPU参考资料/
+【2026夏】数逻实验综合实验指导书.pdf
 mars/
 reference/
 2026数逻实验_夏季学期绪论_流水线CPU.pdf
