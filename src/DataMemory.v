@@ -12,7 +12,12 @@ module DataMemory(
 `endif
 	reg [31:0] RAM [0:4095];          // 16KB (enlarged from 2KB so the DFS memo table fits realistic grids)
 	initial $readmemh(`DMEM_FILE, RAM);
-	assign Read_data = MemRead ? RAM[Address[13:2]] : 32'd0;
+	// Registered read — removes async LUTRAM read from critical path.
+	// Loads now see 1 extra cycle of latency in MEM (handled by the
+	// dmem_stall mechanism in PipelineCPU.v).
+	reg [31:0] Read_data;
+	always @(posedge clk)
+		Read_data <= MemRead ? RAM[Address[13:2]] : 32'd0;
 	always @(posedge clk)
 		if (MemWrite) RAM[Address[13:2]] <= Write_data;
 endmodule
