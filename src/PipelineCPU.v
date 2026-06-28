@@ -59,15 +59,28 @@ module PipelineCPU(
 		else if (!early_hold || redirect_EX || redirect_ID) PC <= PC_next;
 
 	wire [31:0] IF_inst;
-	InstructionMemory imem(.Address(PC), .Instruction(IF_inst));
+	InstructionMemory imem(.reset(reset), .clk(clk), .hold(early_hold), .Address(PC), .Instruction(IF_inst));
+
+	// Registered IMEM adds 1 cycle of IF latency: after a redirect the
+	// instruction at the old PC path is still captured by IMEM during the
+	// redirect cycle.  One extra flush cycle keeps it out of IF/ID.
+	reg redirect_flush;
+	always @(posedge clk or posedge reset)
+		if (reset) redirect_flush <= 0;
+		else redirect_flush <= redirect_EX || redirect_ID;
 
 	// ---------- IF/ID ----------
 	reg [31:0] IFID_pc4, IFID_inst;
+	wire flush_IFID_ext = flush_IFID || redirect_flush;
 	always @(posedge clk or posedge reset)
 		if (reset) begin IFID_pc4<=0; IFID_inst<=0; end
 		else if (!early_hold) begin
-			if (flush_IFID) begin IFID_pc4<=0; IFID_inst<=32'h00000000; end
-			else begin IFID_pc4<=PC_plus4; IFID_inst<=IF_inst; end
+			if (flush_IFID_ext) begin IFID_pc4<=0; IFID_inst<=32'h00000000; end
+			// Registered IMEM: Instruction captured at posedge N corresponds to
+			// the PC value from cycle N.  PC has already advanced to PC+4 at
+			// that posedge, so the correct "next PC" for the captured instruction
+			// is the current PC (which == old_PC+4).
+			else begin IFID_pc4<=PC; IFID_inst<=IF_inst; end
 		end
 
 	// ================= ID =================
