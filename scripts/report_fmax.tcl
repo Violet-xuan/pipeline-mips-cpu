@@ -16,7 +16,7 @@ open_project $xpr
 open_run impl_1
 
 # cpu_clk target period (must match create_generated_clock in welog1.xdc)
-set clk_period 20.0
+set clk_period 12.5
 
 report_timing_summary -file [file join $root_dir build fmax_timing.rpt]
 
@@ -29,7 +29,7 @@ if {[llength $paths] == 0} {
     set crit [expr {$clk_period - $wns}]
     set fmax [expr {1000.0 / $crit}]
     puts "================ CPU Fmax ================"
-    puts "cpu_clk period (target) = $clk_period ns (= 50 MHz)"
+    puts "cpu_clk period (target) = $clk_period ns (= 80 MHz)"
     puts "worst setup slack (WNS) = $wns ns"
     puts "critical path delay     = $crit ns"
     puts [format "implied Fmax            = %.2f MHz" $fmax]

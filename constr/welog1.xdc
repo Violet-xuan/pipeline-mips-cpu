@@ -1,11 +1,11 @@
 ## 时钟 100MHz
 set_property -dict {PACKAGE_PIN R4 IOSTANDARD LVCMOS33} [get_ports clk100]
 create_clock -name sys_clk -period 10.000 [get_ports clk100]
-## CPU runs on cpu_clk = clk100/2 = 50 MHz (toggle FF cpu_clk_r in top.v).
-## Define it as a generated clock so STA budgets the CPU at its real 20 ns
-## period (not the pessimistic 10 ns of sys_clk). Check WNS via report_fmax.tcl.
-create_generated_clock -name cpu_clk -source [get_ports clk100] -divide_by 2 \
-    [get_pins cpu_clk_r_reg/Q]
+## CPU runs on cpu_clk = 80 MHz (MMCM: 100 * 8 / 10).
+## Generated clock on MMCM CLKOUT0 so STA budgets CPU paths at 12.5 ns.
+create_generated_clock -name cpu_clk -source [get_pins mmcm/CLKIN1] \
+    -master_clock sys_clk -divide_by 5 -multiply_by 4 \
+    [get_pins mmcm/CLKOUT0]
 
 ## 复位 KEY1（按下高电平）
 set_property -dict {PACKAGE_PIN B22 IOSTANDARD LVCMOS33} [get_ports rst_btn]
@@ -25,6 +25,6 @@ set_property -dict {PACKAGE_PIN P2 IOSTANDARD LVCMOS33} [get_ports sel2]
 set_property -dict {PACKAGE_PIN R1 IOSTANDARD LVCMOS33} [get_ports sel3]
 set_property -dict {PACKAGE_PIN Y3 IOSTANDARD LVCMOS33} [get_ports sel4]
 
-## UART（选做）
+## UART
 set_property -dict {PACKAGE_PIN A20 IOSTANDARD LVCMOS33} [get_ports uart_txd]
 set_property -dict {PACKAGE_PIN B20 IOSTANDARD LVCMOS33} [get_ports uart_rxd]
