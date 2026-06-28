@@ -2,9 +2,10 @@
 set_property -dict {PACKAGE_PIN R4 IOSTANDARD LVCMOS33} [get_ports clk100]
 create_clock -name sys_clk -period 10.000 [get_ports clk100]
 ## CPU runs on cpu_clk = 80 MHz (MMCM: 100 * 8 / 10).
-## Generated clock on MMCM CLKOUT0 so STA budgets CPU paths at 12.5 ns.
+## Vivado auto-derives this clock from the MMCM; the constraint below
+## ensures STA treats it as a 12.5 ns period clock.
 create_generated_clock -name cpu_clk -source [get_pins mmcm/CLKIN1] \
-    -master_clock sys_clk -divide_by 5 -multiply_by 4 \
+    -master_clock sys_clk -divide_by 5 -multiply_by 4 -add \
     [get_pins mmcm/CLKOUT0]
 
 ## 复位 KEY1（按下高电平）
