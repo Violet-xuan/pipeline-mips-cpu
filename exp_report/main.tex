@@ -1,0 +1,413 @@
+% !TeX program = xelatex
+% !TeX encoding = UTF-8
+% 清华大学数字逻辑电路实验 夏季学期综合实验报告
+% 五级流水线 MIPS 处理器设计与实现
+\documentclass[12pt,a4paper]{ctexart}
+
+% ---- Packages ----
+\usepackage{geometry}
+\geometry{left=2.5cm,right=2.5cm,top=2.5cm,bottom=2.5cm}
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{tikz}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+\usepackage{amsmath}
+\usepackage{enumitem}
+\usepackage{caption}
+\usepackage{fancyhdr}
+\usepackage{listings}
+
+% ---- Page style ----
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{数字逻辑电路实验·夏季学期综合实验报告}
+\fancyhead[R]{五级流水线 MIPS 处理器}
+\fancyfoot[C]{\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+% ---- Metadata ----
+\title{{\Huge 五级流水线 MIPS 处理器\\[4pt] 设计与实现}\\[8pt]
+       {\large 数字逻辑电路实验·夏季学期综合实验报告}}
+\author{雷涛（Tao Lei）}
+\date{2026 年 7 月}
+
+\begin{document}
+\maketitle
+\thispagestyle{empty}
+
+% ======================================================================
+\section{摘要}
+
+本项目在 WELOG1 开发板（Xilinx Artix-7 xc7a35tfgg484-2）上实现了一个完整的五级流水线
+MIPS 处理器，支持双向 UART 通信，并在板上运行《传纸条》动态规划任务。
+
+处理器采用经典的五级流水线结构（IF/ID/EX/MEM/WB），实现了完整的数据前推（forwarding）、
+load-use 冒险检测与气泡插入、以及分支/跳转指令的早期解析。外设通过内存映射 I/O（MMIO）
+方式接入，包括七段数码管显示和 UART 串口收发器。
+
+为提升主频，针对关键路径上的异步分布式 RAM 读取和 DSP 单周期乘法进行了流水线化优化，
+并采用 MMCM 将 CPU 时钟从 50\,MHz 提升至 80\,MHz（提升 60\%）。
+最终设计在 80\,MHz 下后布局布线时序收敛（WNS = +0.473\,ns），板上验证全部 5 组
+《传纸条》测试数据集结果正确。
+
+% ======================================================================
+\section{设计目标与方案}
+
+\subsection{设计要求}
+
+根据实验指导书要求，本设计需满足：
+\begin{enumerate}[nosep]
+  \item 五级流水线 MIPS 处理器，支持完整的数据前推（forwarding）；
+  \item Load-use 相关采用「一个气泡 + forwarding」方案处理；
+  \item 分支指令在 EX 阶段解析，跳转指令 J/JAL 在 ID 阶段解析；
+  \item 支持的分支/跳转指令：beq, bne, blez, bgtz, bltz, j, jal, jr, jalr；
+  \item 内存映射外设：七段数码管（0x40000010）和 UART 串口（0x40000018/1C/20）；
+  \item 实现《传纸条》DFS 动态规划算法，通过 UART 与 PC 双向通信。
+\end{enumerate}
+
+\subsection{总体方案}
+
+系统由以下核心模块组成：
+\begin{itemize}[nosep]
+  \item \textbf{PipelineCPU}：五级流水线数据通路 + 控制通路
+  \item \textbf{Control / ALUControl}：主控制器和 ALU 控制单元
+  \item \textbf{ForwardingUnit / HazardUnit}：前推单元和冒险检测单元
+  \item \textbf{RegisterFile}：32×32 位寄存器堆（negedge 写入）
+  \item \textbf{InstructionMemory / DataMemory}：指令存储器（1024×32 bit）和数据存储器（4096×32 bit）
+  \item \textbf{MemBus}：内存总线，负责地址译码和外设读写路由
+  \item \textbf{UART}：8N1 串口收发器（9600 baud）
+  \item \textbf{top}：顶层模块，含 MMCM 时钟生成和七段数码管译码
+\end{itemize}
+
+% ======================================================================
+\section{CPU 架构设计}
+
+\subsection{五级流水线结构}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+  node distance=1.8cm,
+  block/.style={rectangle,draw,minimum width=1.6cm,minimum height=0.7cm,align=center,font=\small},
+  regblk/.style={rectangle,draw,minimum width=0.5cm,minimum height=1.2cm,fill=gray!15,font=\small},
+  arrow/.style={->,>=stealth,thick}
+]
+  % Pipeline stages
+  \node[block] (IF)  {IF\\取指};
+  \node[regblk,right=0.3cm of IF] (IFID) {IF/ID};
+  \node[block,right=0.3cm of IFID] (ID)  {ID\\译码};
+  \node[regblk,right=0.3cm of ID] (IDEX) {ID/EX};
+  \node[block,right=0.3cm of IDEX] (EX)  {EX\\执行};
+  \node[regblk,right=0.3cm of EX] (EXMEM) {EX/MEM};
+  \node[block,right=0.3cm of EXMEM] (MEM) {MEM\\访存};
+  \node[regblk,right=0.3cm of MEM] (MEMWB) {MEM/WB};
+  \node[block,right=0.3cm of MEMWB] (WB)  {WB\\写回};
+
+  % Arrows between stages
+  \draw[arrow] (IF) -- (IFID);
+  \draw[arrow] (IFID) -- (ID);
+  \draw[arrow] (ID) -- (IDEX);
+  \draw[arrow] (IDEX) -- (EX);
+  \draw[arrow] (EX) -- (EXMEM);
+  \draw[arrow] (EXMEM) -- (MEM);
+  \draw[arrow] (MEM) -- (MEMWB);
+  \draw[arrow] (MEMWB) -- (WB);
+
+  % Forwarding paths (below)
+  \draw[arrow,blue,thick,bend right=30] (EXMEM.south) to node[below,font=\footnotesize] {前推到 EX} (IDEX.south|-EXMEM.south);
+  \draw[arrow,blue,thick,bend right=45] (MEMWB.south) to node[below=0.5cm,font=\footnotesize] {前推到 EX} (IDEX.south|-MEMWB.south);
+
+  \node[font=\small,right=0.2cm of WB] {$\to$ RegFile};
+\end{tikzpicture}
+\caption{五级流水线结构与前推路径}
+\label{fig:pipeline}
+\end{figure}
+
+\subsection{数据前推（Forwarding）}
+
+ForwardingUnit 检测 ID/EX 阶段的 rs/rt 与 EX/MEM、MEM/WB 阶段的写目标寄存器之间的
+相关性，生成 ForwardA/ForwardB 控制信号：
+
+\[
+\text{ForwardA} = \begin{cases}
+\text{2'b10} & \text{EX/MEM 前推：} \text{EXMEM.RegWrite} \land (\text{EXMEM.rd} \neq 0) \land (\text{EXMEM.rd} = \text{rs}) \\
+\text{2'b01} & \text{MEM/WB 前推：} \text{MEMWB.RegWrite} \land (\text{MEMWB.rd} \neq 0) \land (\text{MEMWB.rd} = \text{rs}) \\
+\text{2'b00} & \text{无前推（使用寄存器堆读出值）}
+\end{cases}
+\]
+
+前推结果在 EX 阶段通过多路选择器替换 ALU 的源操作数，消除了大部分 RAW 数据相关。
+
+\subsection{冒险检测（Hazard Detection）}
+
+HazardUnit 处理两种冒险：
+\begin{enumerate}[nosep]
+  \item \textbf{Load-use 冒险}：当 load 指令在 EX 阶段（或 MEM 阶段，因为 DMEM
+  寄存器化后 load 在 MEM 多等一个周期），且紧随其后的指令使用了 load 的目标寄存器时，
+  插入一个气泡（将 ID/EX 寄存器清零）并冻结 PC 和 IF/ID 寄存器。
+  \item \textbf{分支/跳转冲刷}：分支在 EX 阶段解析后冲刷 IF/ID 和
+  ID/EX（插入气泡）；J/JAL 在 ID 阶段解析后仅冲刷 IF/ID。
+\end{enumerate}
+
+由于 IMEM 输出寄存器化增加了 1 个周期的取指延迟，branch/jump 的冲刷信号额外延长
+1 个周期（通过 redirect\_flush 寄存器），以保证 IMEM 流水线中的过期指令被正确排出。
+
+\subsection{分支与跳转}
+
+\begin{itemize}[nosep]
+  \item \textbf{分支指令（beq/bne/blez/bgtz/bltz）}：在 EX 阶段使用前推后的操作数
+  进行比较，若分支成立则生成 redirect\_EX，PC 跳转到目标地址，同时冲刷 IF/ID 和 ID/EX。
+  \item \textbf{JR/JALR}：在 EX 阶段解析，目标地址来自前推后的 rs 寄存器值。
+  \item \textbf{J/JAL}：在 ID 阶段解析，目标地址由 IF/ID\_pc4 高 4 位与指令中的
+  26 位立即数拼接而成。JAL 的返回地址（pc\_plus\_4）通过流水线寄存器传递至 WB 阶段
+  写回 \$31 寄存器。
+\end{itemize}
+
+\subsection{指令集}
+
+支持的 MIPS 指令包括：
+\begin{itemize}[nosep]
+  \item \textbf{算术/逻辑}：add, sub, and, or, xor, nor, slt, addi, andi, ori,
+  slti, sll, srl, sra, lui
+  \item \textbf{乘法}：mul（单周期 DSP48E1，经流水线化后为 2 个 EX 周期）
+  \item \textbf{访存}：lw, sw
+  \item \textbf{分支}：beq, bne, blez, bgtz, bltz
+  \item \textbf{跳转}：j, jal, jr, jalr
+\end{itemize}
+
+% ======================================================================
+\section{外设接口}
+
+\subsection{内存映射}
+
+系统采用统一地址空间，通过地址 bit[30] 区分数据存储器和外设：
+
+\begin{table}[H]
+\centering
+\caption{内存映射地址表}
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{地址范围（字节地址）} & \textbf{功能} & \textbf{说明} \\
+\midrule
+0x00000000 -- 0x00003FFF & 数据存储器（DMEM） & 4096×32 bit 分布式 RAM \\
+0x40000010              & 七段数码管（digi） & [11:8]=位选, [7]=dp, [6:0]=段选 \\
+0x40000018              & UART 发送（TXD）  & 写低 8 位触发发送 \\
+0x4000001C              & UART 接收（RXD）  & 读低 8 位获取接收数据 \\
+0x40000020              & UART 状态（CON）  & bit4=tx\_busy, bit3=rx\_done, bit2=tx\_done \\
+\bottomrule
+\end{tabular}
+\label{tab:mmio}
+\end{table}
+
+\subsection{UART 通信协议}
+
+UART 配置为 9600 baud、8 个数据位、无校验、1 个停止位（8N1）。
+波特率分频系数由 MemBus 的 CLK\_FREQ 参数自动计算：
+$\text{DIV} = \text{CLK\_FREQ} / \text{BAUD} = 80\times10^6 / 9600 = 8333$。
+
+PC 与开发板之间的《传纸条》通信采用二进制协议：
+\begin{itemize}[nosep]
+  \item \textbf{PC → 板}：1 字节 $m$（行数）、1 字节 $n$（列数）、$m \times n$
+  个网格字节（每个 0--255，行主序）。
+  \item \textbf{板 → PC}：4 字节结果，big-endian 格式（MSB 优先）。
+\end{itemize}
+
+% ======================================================================
+\section{频率优化}
+
+\subsection{初始状态}
+
+初始设计使用 clk100 二分频（toggle FF）生成 50\,MHz CPU 时钟。
+Post-route 关键路径延迟约 15.7\,ns（隐含 Fmax $\approx$ 63.7\,MHz），
+WNS = +4.3\,ns @ 20\,ns 周期。
+关键路径主要由三部分构成：异步分布式 RAM（LUTRAM）的 IMEM/DMEM 读取、DSP48E1 单周期
+乘法、以及寄存器堆与控制逻辑的组合路径。
+
+\subsection{优化策略}
+
+为将主频提升至 80\,MHz（周期 12.5\,ns，需将关键路径缩短至 $\leq 12.5$\,ns），
+对三项关键路径瓶颈进行了流水线化：
+
+\begin{enumerate}
+  \item \textbf{DSP 乘法流水线化}：将单周期 \texttt{mul} 指令拆分为 2 个 EX 周期。
+  第 1 个周期通过组合逻辑将乘积打入专用寄存器（mul\_result），流水线暂停（hold 策略）；
+  第 2 个周期将寄存器中的结果送入 EX/MEM。此改动移除 DSP 乘法组合路径（$\sim$4--5\,ns）
+  对关键路径的贡献。
+  \item \textbf{DMEM 输出寄存器化}：将 DataMemory 的读端口从组合逻辑输出
+  （\texttt{assign Read\_data = ...}）改为寄存器输出。Load 指令在 MEM 阶段额外等待
+  1 个周期等待数据就绪。此改动移除 DMEM LUTRAM 读（$\sim$2--3\,ns）对关键路径的贡献。
+  \item \textbf{IMEM 输出寄存器化}：将 InstructionMemory 的读端口改为同步寄存器输出，
+  增加 1 个周期的 IF 延迟。为避免流水线暂停期间 IMEM 寄存器被冻结 PC 处的垃圾指令覆盖，
+  引入了 hold 信号冻结 IMEM 输出寄存器。此外，额外增加 1 个周期的 redirect\_flush，
+  确保分支/跳转后 IMEM 流水线被正��排出。
+\end{enumerate}
+
+以上三项优化均采用「保持」（hold）而非「气泡」（bubble）的流水线暂停策略：
+在 multi-cycle 操作期间，PC、IF/ID、ID/EX 被冻结，而非插入 NOP。这保证了被暂停指令
+的控制信号不会丢失。
+
+\subsection{MMCM 时钟生成}
+
+使用 Artix-7 片内 MMCME2\_BASE 原语，从 100\,MHz 输入时钟生成 80\,MHz CPU 时钟：
+
+\[
+f_{\text{CPU}} = 100\,\text{MHz} \times \frac{\text{CLKFBOUT\_MULT}}{\text{DIVCLK\_DIVIDE} \times \text{CLKOUT0\_DIVIDE}}
+= 100\,\text{MHz} \times \frac{8}{1 \times 10} = 80\,\text{MHz}
+\]
+
+其中 VCO 频率 $f_{\text{VCO}} = 100 \times 8 = 800\,\text{MHz}$，在 600--1200\,MHz
+的有效范围内。MMCM 锁定信号（LOCKED）与外部复位按钮（rst\_btn）进行逻辑或，
+产生 CPU 的系统复位信号，确保时钟稳定后再释放复位。
+
+\subsection{时序结果}
+
+\begin{table}[H]
+\centering
+\caption{频率优化前后时序对比}
+\begin{tabular}{@{}lccc@{}}
+\toprule
+\textbf{指标} & \textbf{优化前（50\,MHz）} & \textbf{优化后（80\,MHz）} & \textbf{改善} \\
+\midrule
+时钟周期                & 20.00\,ns  & 12.50\,ns  & -- \\
+WNS（最差建立时间裕量） & +4.27\,ns  & +0.47\,ns  & -- \\
+关键路径延迟            & 15.73\,ns  & 12.03\,ns  & $-23.5\%$ \\
+隐含 Fmax               & 63.6\,MHz  & 83.2\,MHz  & $+30.7\%$ \\
+Failing Endpoints       & 0          & 0          & -- \\
+\bottomrule
+\end{tabular}
+\label{tab:timing}
+\end{table}
+
+% ======================================================================
+\section{性能分析}
+
+\subsection{CPI 测量}
+
+CPI（Cycles Per Instruction）通过自定义 testbench（tb\_cpu\_cpi\_measure）在仿真中测量，
+统计从复位释放到《传纸条》算法完成（向 scratch[0x3FF8] 写入结果）之间的时钟周期数 $C$
+和提交的指令数 $N$（即 WB 阶段 RegWrite 有效的周期数）。
+
+以 3×3 网格为基准测试：
+\begin{itemize}[nosep]
+  \item $C = 8556$ 周期（不含数码管显示循环）
+  \item $N = 5817$ 条指令
+  \item $\text{CPI} = C / N = 8556 / 5817 \approx 1.47$
+\end{itemize}
+
+流水线优化前（异步 IMEM/DMEM + 单周期 mul）的 CPI 约为 0.71。
+CPI 从 0.71 增加到 1.47（$\times 2.07$），主要原因包括：
+\begin{itemize}[nosep]
+  \item IMEM 寄存器化增加 1 周期取指延迟及额外的分支冲刷周期；
+  \item DMEM 寄存器化使每条 load 指令增加 2 个 MEM 周期；
+  \item DSP 乘法流水线化使每条 mul 指令增加 1 个 EX 周期；
+  \item 传纸条程序中包含约 8 条 mul 指令和大量 load 指令。
+\end{itemize}
+
+尽管 CPI 有所牺牲，但主频从 50\,MHz 提升至 80\,MHz（$\times 1.6$），
+有效指令吞吐量的变化为：
+\[
+\frac{80/1.47}{50/0.71} \approx \frac{54.4}{70.4} \approx 0.77
+\]
+即优化后的峰值指令吞吐量约为优化前的 77\%。此权衡在实验验收中是可接受的
+——频率提升是核心验收指标。如需进一步提升吞吐量，可将 IMEM/DMEM 替换为 BRAM
+（利用其内置输出寄存器，减少额外的 stall 周期）。
+
+\subsection{资源利用率}
+
+\begin{table}[H]
+\centering
+\caption{Vivado 综合资源利用率（xc7a35tfgg484-2）}
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+\textbf{资源} & \textbf{已用} & \textbf{总量} & \textbf{利用率} & \textbf{备注} \\
+\midrule
+Slice LUTs    & 1,713   & 20,800  & 8.24\%  & 分布式 RAM 用于 IMEM/DMEM \\
+Slice Registers & 1,581 & 41,600  & 3.80\%  & 流水线寄存器 \\
+DSP48E1       & 6       & 90      & 6.67\%  & 32-bit 乘法器（3 DSP/cascade） \\
+Block RAM     & 0       & 50      & 0\%     & 未使用（全部为分布式 RAM） \\
+I/O           & 16      & 250     & 6.40\%  & 时钟、复位、UART、数码管 \\
+BUFG          & 2       & 32      & 6.25\%  & sys\_clk + cpu\_clk \\
+\bottomrule
+\end{tabular}
+\label{tab:util}
+\end{table}
+
+整体资源占用很低，远未达到 xc7a35t 的上限，表明该设计有充足的扩展空间
+（例如增加 Cache、浮点单元、或更复杂的外设）。
+
+% ======================================================================
+\section{验证结果}
+
+\subsection{仿真验证}
+
+使用 Icarus Verilog（iverilog/vvp）对设计进行了多层次的仿真验证：
+
+\begin{table}[H]
+\centering
+\caption{仿真测试结果汇总}
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{测试用例} & \textbf{测试内容} & \textbf{结果} \\
+\midrule
+tb\_hazard        & 冒险检测单元（含 MEM 级 load-use） & PASS \\
+tb\_forwarding    & 前推单元逻辑验证                     & PASS \\
+tb\_cpu\_basic    & 基本指令执行                         & PASS \\
+tb\_cpu\_forward  & 数据前推功能                         & PASS \\
+tb\_cpu\_loaduse  & Load-use 冒险 + 寄存器化 DMEM       & PASS \\
+tb\_cpu\_branch   & 分支跳转 + 寄存器化 IMEM            & PASS \\
+tb\_cpu\_mmio     & MMIO 外设（数码管）                  & PASS \\
+\bottomrule
+\end{tabular}
+\label{tab:sim}
+\end{table}
+
+\subsection{上板验证}
+
+在 WELOG1 开发板上运行《传纸条》程序，通过 UART（COM12, 9600 8N1）
+与 PC 进行二进制通信。全部 5 组测试数据集结果正确，且无需在数据集之间复位：
+
+\begin{table}[H]
+\centering
+\caption{上板验证结果（80\,MHz）}
+\begin{tabular}{@{}cccc@{}}
+\toprule
+\textbf{数据集} & \textbf{网格} & \textbf{板上结果} & \textbf{参考结果} \\
+\midrule
+1 & 2×2 & 12 & 12 \\
+2 & 3×3 & 34 & 34 \\
+3 & 3×4 & 41 & 41 \\
+4 & 4×4 & 41 & 41 \\
+5 & 5×5 & 76 & 76 \\
+\bottomrule
+\end{tabular}
+\label{tab:board}
+\end{table}
+
+% ======================================================================
+\section{总结}
+
+本项目成功设计并实现了一个完整的五级流水线 MIPS 处理器，并在 WELOG1 FPGA 开发板上
+完成了全部功能的验证。主要成果包括：
+
+\begin{enumerate}[nosep]
+  \item 实现了完整的五级流水线数据通路，包含 forwarding、load-use 冒险检测、
+  分支/跳转解析等功能，支持 MIPS I 兼容指令集。
+  \item 通过 MMIO 方式集成了七段数码管和 UART 外设，实现了 PC ↔ 开发板的双向
+  二进制通信，成功运行《传纸条》动态规划任务。
+  \item 通过对关键路径的流水线化优化（DSP 乘法、DMEM 输出、IMEM 输出），
+  将 CPU 主频从 50\,MHz 提升至 80\,MHz（提升 60\%）。
+  \item 优化后设计在 80\,MHz 下时序收敛（WNS = +0.473\,ns，Fmax = 83.2\,MHz），
+  板上 5 组数据集全部通过。
+  \item 基准测试 CPI = 1.47（3×3 传纸条），资源占用率低（LUT 8.24\%，FF 3.80\%，
+  DSP 6.67\%）。
+\end{enumerate}
+
+频率提升以 CPI 为代价（从 0.71 升至 1.47），但总体上满足了实验的核心要求。
+未来可通过使用 BRAM 替代分布式 RAM 来进一步同时优化频率和 CPI。
+
+\end{document}
