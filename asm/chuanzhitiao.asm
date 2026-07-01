@@ -55,7 +55,8 @@ dp_clear_all:
     sw    $t8, 0($t0)
     addiu $t0, $t0, 4
     blt   $t0, $t3, dp_clear_all
-    sw    $zero, 0($s3)            # dp[0][0][0] = 0
+    lw    $t9, 0($s2)
+    sw    $t9, 0($s3)              # dp[0][0][0] = grid[0][0]
 
     addiu $t0, $zero, 1            # k = 1
 dp_k_loop:
