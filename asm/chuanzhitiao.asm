@@ -26,7 +26,8 @@
 # DFS args: $a0=x1 $a1=y1 $a2=x2 ; returns best additional sum in $v0 (-1 if infeasible)
 
 main:
-    addiu $sp, $zero, 16372        # $sp = 0x3FF4 (reset every round)
+    lui   $sp, 0x0001              # $sp = 0x1FFF4 (top of 128KB, reset every round)
+    ori   $sp, $sp, 0xFFF4
     jal   recv_dataset             # read m, n, grid from UART into DMEM
 
     lw    $s0, 0($zero)            # m
