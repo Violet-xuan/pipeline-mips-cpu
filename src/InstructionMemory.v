@@ -17,5 +17,5 @@ module InstructionMemory(
 	reg [31:0] Instruction;
 	always @(posedge clk)
 		if (reset) Instruction <= 32'h00000000;
-		else if (!hold) Instruction <= rom[Address[31:2]];
+		else if (!hold) Instruction <= rom[Address[11:2]];
 endmodule

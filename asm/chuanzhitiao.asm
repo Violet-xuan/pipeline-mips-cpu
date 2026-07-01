@@ -33,32 +33,156 @@ main:
     lw    $s0, 0($zero)            # m
     lw    $s1, 4($zero)            # n
     addiu $s2, $zero, 8            # grid base = 0x0008
+
+    # Bottom-up DP with two rolling layers:
+    #   dp[k][x1][x2], y1=k-x1, y2=k-x2
+    # prev_base = grid_base + m*n*4
+    # curr_base = prev_base + m*m*4
+    mul   $t0, $s0, $s1
+    sll   $t0, $t0, 2
+    add   $s3, $s2, $t0            # s3 = prev_base
+    mul   $t0, $s0, $s0
+    sll   $s6, $t0, 2              # s6 = layer bytes = m*m*4
+    add   $s4, $s3, $s6            # s4 = curr_base
     add   $t0, $s0, $s1
-    addi  $s7, $t0, -1             # s7 = m+n-1
+    addi  $s7, $t0, -2             # s7 = last step = m+n-2
 
-    # memo_base = grid_base + m*n*4
-    mul   $t1, $s0, $s1
-    sll   $t1, $t1, 2
-    add   $s3, $s2, $t1            # memo base
-
-    # init memo table (size (m+n-1)*m*m words) to -1
-    mul   $t2, $s7, $s0
-    mul   $t2, $t2, $s0
-    sll   $t2, $t2, 2              # bytes
-    add   $t2, $s3, $t2            # end address
+    # clear both DP layers to -1
     addiu $t8, $zero, -1
+    add   $t3, $s4, $s6            # end = curr_base + layer_bytes
     move  $t0, $s3
-init_loop:
+dp_clear_all:
     sw    $t8, 0($t0)
     addiu $t0, $t0, 4
-    blt   $t0, $t2, init_loop
+    blt   $t0, $t3, dp_clear_all
+    sw    $zero, 0($s3)            # dp[0][0][0] = 0
 
-    addiu $a0, $zero, 0
-    addiu $a1, $zero, 0
-    addiu $a2, $zero, 0
-    jal   DFS
+    addiu $t0, $zero, 1            # k = 1
+dp_k_loop:
+    bgt   $t0, $s7, dp_done
 
-    move  $s5, $v0                 # result
+    # clear curr layer to -1
+    addiu $t8, $zero, -1
+    add   $t3, $s4, $s6
+    move  $t6, $s4
+dp_clear_curr:
+    sw    $t8, 0($t6)
+    addiu $t6, $t6, 4
+    blt   $t6, $t3, dp_clear_curr
+
+    addiu $t1, $zero, 0            # x1
+dp_x1_loop:
+    bge   $t1, $s0, dp_swap_layers
+    sub   $t3, $t0, $t1            # y1 = k - x1
+    blt   $t3, $zero, dp_next_x1
+    bge   $t3, $s1, dp_next_x1
+
+    addiu $t2, $zero, 0            # x2
+dp_x2_loop:
+    bge   $t2, $s0, dp_next_x1
+    sub   $t4, $t0, $t2            # y2 = k - x2
+    blt   $t4, $zero, dp_next_x2
+    bge   $t4, $s1, dp_next_x2
+
+    addiu $t5, $zero, -1           # best predecessor
+
+    # predecessor (x1, x2)
+    mul   $t6, $t1, $s0
+    add   $t6, $t6, $t2
+    sll   $t6, $t6, 2
+    add   $t6, $t6, $s3
+    lw    $t7, 0($t6)
+    ble   $t7, $t5, dp_pred_10
+    move  $t5, $t7
+
+dp_pred_10:
+    # predecessor (x1-1, x2)
+    blez  $t1, dp_pred_01
+    addi  $t9, $t1, -1
+    mul   $t6, $t9, $s0
+    add   $t6, $t6, $t2
+    sll   $t6, $t6, 2
+    add   $t6, $t6, $s3
+    lw    $t7, 0($t6)
+    ble   $t7, $t5, dp_pred_01
+    move  $t5, $t7
+
+dp_pred_01:
+    # predecessor (x1, x2-1)
+    blez  $t2, dp_pred_11
+    addi  $t9, $t2, -1
+    mul   $t6, $t1, $s0
+    add   $t6, $t6, $t9
+    sll   $t6, $t6, 2
+    add   $t6, $t6, $s3
+    lw    $t7, 0($t6)
+    ble   $t7, $t5, dp_pred_11
+    move  $t5, $t7
+
+dp_pred_11:
+    # predecessor (x1-1, x2-1)
+    blez  $t1, dp_have_best
+    blez  $t2, dp_have_best
+    addi  $t9, $t1, -1
+    mul   $t6, $t9, $s0
+    addi  $t9, $t2, -1
+    add   $t6, $t6, $t9
+    sll   $t6, $t6, 2
+    add   $t6, $t6, $s3
+    lw    $t7, 0($t6)
+    ble   $t7, $t5, dp_have_best
+    move  $t5, $t7
+
+dp_have_best:
+    addiu $t8, $zero, -1
+    beq   $t5, $t8, dp_next_x2
+    beq   $t0, $s7, dp_store       # do not count the destination cell
+
+    # add grid[x1][y1]
+    mul   $t6, $t1, $s1
+    add   $t6, $t6, $t3
+    sll   $t6, $t6, 2
+    add   $t6, $t6, $s2
+    lw    $t7, 0($t6)
+    add   $t5, $t5, $t7
+
+    # add grid[x2][y2] if the two walkers are on different cells
+    beq   $t1, $t2, dp_store
+    mul   $t6, $t2, $s1
+    add   $t6, $t6, $t4
+    sll   $t6, $t6, 2
+    add   $t6, $t6, $s2
+    lw    $t7, 0($t6)
+    add   $t5, $t5, $t7
+
+dp_store:
+    mul   $t6, $t1, $s0
+    add   $t6, $t6, $t2
+    sll   $t6, $t6, 2
+    add   $t6, $t6, $s4
+    sw    $t5, 0($t6)
+
+dp_next_x2:
+    addiu $t2, $t2, 1
+    j     dp_x2_loop
+dp_next_x1:
+    addiu $t1, $t1, 1
+    j     dp_x1_loop
+
+dp_swap_layers:
+    move  $t6, $s3
+    move  $s3, $s4
+    move  $s4, $t6
+    addiu $t0, $t0, 1
+    j     dp_k_loop
+
+dp_done:
+    addi  $t1, $s0, -1
+    mul   $t6, $t1, $s0
+    add   $t6, $t6, $t1
+    sll   $t6, $t6, 2
+    add   $t6, $t6, $s3
+    lw    $s5, 0($t6)              # result
     sw    $s5, 16376($zero)        # scratch 0x3FF8 (sim check)
     jal   send_result              # send result (4 bytes, MSB first) over UART
 
@@ -269,131 +393,3 @@ delay_l:
     addiu $t1, $t1, -1
     bne   $t1, $zero, delay_l
     jr    $ra
-
-# ============================ DFS ============================
-# transcribed from the theory-course recursion.asm
-DFS:
-    addi    $sp, $sp, -32
-    sw      $ra, 0($sp)
-    sw      $a0, 4($sp)
-    sw      $a1, 8($sp)
-    sw      $a2, 12($sp)
-
-    add     $s4, $a0, $a1          # s4 = k = x1+y1
-    sub     $t5, $s4, $a2          # t5 = y2 = k - x2
-
-    # boundary checks -> return -1
-    bge     $s4, $s7, exit_boud
-    bge     $a1, $s1, exit_boud
-    bge     $a2, $s0, exit_boud
-    bge     $a0, $s0, exit_boud
-    blt     $t5, $zero, exit_boud
-    bge     $t5, $s1, exit_boud
-
-    # memo lookup: idx = k*m*m + x1*m + x2
-    addiu   $t8, $zero, -1
-    mul     $t1, $s4, $s0
-    mul     $t1, $t1, $s0
-    mul     $t2, $a0, $s0
-    add     $t2, $t2, $a2
-    add     $t0, $t1, $t2
-    sll     $t0, $t0, 2
-    add     $t0, $t0, $s3
-    move    $s6, $t0               # current memo address
-    sw      $s6, 24($sp)
-    lw      $s5, 0($t0)            # memo[k][x1][x2]
-    sw      $s5, 16($sp)
-    bne     $s5, $t8, exit_memo    # if memo != -1, return it
-
-    # base case: k == m+n-2 -> return 0
-    add     $t0, $s7, -1
-    beq     $s4, $t0, exit_final
-
-    # current value = grid[x1][y1] (+ grid[x2][y2] if different cell)
-    mul     $t0, $s1, $a0
-    add     $t0, $t0, $a1
-    sll     $t0, $t0, 2
-    add     $t0, $t0, $s2
-    lw      $v0, 0($t0)
-    beq     $a0, $a2, equl
-
-    mul     $t0, $s1, $a2
-    add     $t0, $t0, $t5
-    sll     $t0, $t0, 2
-    add     $t0, $t0, $s2
-    lw      $t6, 0($t0)
-    add     $v0, $t6, $v0
-equl:
-    sw      $v0, 20($sp)           # save current value
-
-    # try the 4 transitions, take max into $t6 (init -1)
-    addiu   $t6, $zero, -1
-
-    addi    $a0, $a0, 1
-    addi    $a2, $a2, 1
-    sw      $t6, 28($sp)
-    jal     DFS                    # DFS(x1+1,y1,x2+1)
-    lw      $t6, 28($sp)
-    ble     $v0, $t6, notgreater1
-    move    $t6, $v0
-notgreater1:
-    lw      $a0, 4($sp)
-    lw      $a1, 8($sp)
-    lw      $a2, 12($sp)
-    addi    $a0, $a0, 1
-    sw      $t6, 28($sp)
-    jal     DFS                    # DFS(x1+1,y1,x2)
-    lw      $t6, 28($sp)
-    ble     $v0, $t6, notgreater2
-    move    $t6, $v0
-notgreater2:
-    lw      $a0, 4($sp)
-    lw      $a1, 8($sp)
-    lw      $a2, 12($sp)
-    addi    $a1, $a1, 1
-    addi    $a2, $a2, 1
-    sw      $t6, 28($sp)
-    jal     DFS                    # DFS(x1,y1+1,x2+1)
-    lw      $t6, 28($sp)
-    ble     $v0, $t6, notgreater3
-    move    $t6, $v0
-notgreater3:
-    lw      $a0, 4($sp)
-    lw      $a1, 8($sp)
-    lw      $a2, 12($sp)
-    addi    $a1, $a1, 1
-    sw      $t6, 28($sp)
-    jal     DFS                    # DFS(x1,y1+1,x2)
-    lw      $t6, 28($sp)
-    ble     $v0, $t6, notgreater4
-    move    $t6, $v0
-notgreater4:
-    lw      $a0, 4($sp)
-    lw      $a1, 8($sp)
-    lw      $a2, 12($sp)
-
-    lw      $v0, 20($sp)
-    addiu   $t8, $zero, -1
-    beq     $t6, $t8, exit_boud    # all transitions infeasible -> -1
-    add     $v0, $v0, $t6
-    j       exit
-
-exit_final:                        # k == m+n-2 -> return 0
-    addiu   $v0, $zero, 0
-    j       exit
-exit_boud:                         # out of bounds -> return -1
-    addiu   $v0, $zero, -1
-    j       real_exit
-exit_memo:                         # cached valid value -> return it
-    lw      $v0, 16($sp)
-    j       real_exit
-exit:                              # store result into memo, then return
-    lw      $t0, 24($sp)
-    sw      $v0, 0($t0)
-    lw      $ra, 0($sp)
-    addi    $sp, $sp, 32
-    jr      $ra
-real_exit:
-    lw      $ra, 0($sp)
-    addi    $sp, $sp, 32
-    jr      $ra
